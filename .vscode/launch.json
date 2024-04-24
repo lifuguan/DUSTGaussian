@@ -1,0 +1,22 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "3"
+            },
+            "name": "train: mvsplat",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--config", "configs/train_mvsplat.yaml", "--expname", "debug", 
+            "--ckpt_path", "model_zoo/mvsplat.pth"
+            ]
+        },
+    ]
+}
