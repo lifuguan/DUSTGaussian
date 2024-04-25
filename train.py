@@ -158,7 +158,7 @@ def train(args):
                     logstr = "{} Epoch: {}  step: {} ".format(args.expname, epoch, global_step)
                     for k in scalars_to_log.keys():
                         logstr += " {}: {:.6f}".format(k, scalars_to_log[k])
-                    print(logstr, "each iter time {:.05f} seconds".format(dt))
+                    print(logstr, "{:.05f} s/iter".format(dt))
 
                 if args.expname != 'debug':
                     wandb.log(scalars_to_log)

@@ -5,6 +5,7 @@ from .llff_test import *
 from .ibrnet_collected import *
 from .realestate import *
 from .llff_render import *
+from .waymo import *
 
 dataset_dict = {
     "realestate": RealEstateDataset,
@@ -12,4 +13,5 @@ dataset_dict = {
     "ibrnet_collected": IBRNetCollectedDataset,
     "llff_test": LLFFTestDataset,
     "llff_render": LLFFRenderDataset,
+    "waymo": WaymoStaticDataset,
 }

@@ -53,14 +53,17 @@ class CheckPointManager(object):
         state_dicts = {'step': step}
 
         # Append models.
-        state_dicts['model'] = models.state_dict()
+        for model_name in models.keys():
+            state_dicts[model_name] = de_parallel(models[model_name]).state_dict()
         
         # Append optimizers.
-        state_dicts['optimizer'] = optimizers.state_dict()
+        for optim_name in optimizers.keys():
+            state_dicts[optim_name] = optimizers[optim_name].state_dict()
         
         # Append schedulers.
         if schedulers != None:
-            state_dicts['schedulers'] = schedulers.state_dict()
+            for scheduler_name in schedulers.keys():
+                state_dicts[scheduler_name] = schedulers[scheduler_name].state_dict()
         
         print(f'Saving checkpoint: {checkpoint_name}')
         torch.save(state_dicts, checkpoint_name)
@@ -149,13 +152,18 @@ class CheckPointManager(object):
             step = state['step']
 
         if models is not None:
-            models.load_state_dict(state['model'])
+            for model_name in models.keys():
+                if not model_name in state.keys():
+                    continue
+                models[model_name].load_state_dict(state[model_name])
 
         if optimizers is not None:
-            optimizers.load_state_dict(state['optimizer'])
+            for optim_name in optimizers.keys():
+                optimizers[optim_name].load_state_dict(state[optim_name])
         
         if schedulers != None:
-            schedulers.load_state_dict(state['schedulers'])
+            for scheduler_name in schedulers.keys():
+                schedulers[scheduler_name].load_state_dict(state[scheduler_name])
 
         print(f'[INFO] Loaded models from {checkpoint_name}')
         return step

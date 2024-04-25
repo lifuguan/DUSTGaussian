@@ -10,7 +10,7 @@ from ggrtplus.mvsplat.mvsplat import MvSplat
 class MvSplatModel(object):
     def __init__(self, args, load_opt=True, load_scheduler=True):
         self.args = args
-        output_path = os.path.join(self.args.rootdir, self.args.expname)
+        output_path = os.path.join(self.args.rootdir, "out", self.args.expname)
         if self.args.local_rank == 0:
             os.makedirs(output_path, exist_ok=True)
             print(f'[INFO] Outputs will be saved to {output_path}')
@@ -27,7 +27,6 @@ class MvSplatModel(object):
         
         self.setup_optimizer()
         self.start_step = self.load_checkpoint(load_optimizer=load_opt, load_scheduler=load_scheduler)
-        self.to_distributed()
         if args.distributed:
             self.to_distributed()
 

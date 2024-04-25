@@ -23,8 +23,6 @@ from .wobble import (
 )
 from .interpolatation import interpolate_extrinsics,interpolate_intrinsics
 
-from .ply_export import export_ply
-
 @dataclass
 class OptimizerCfg:
     lr: float
