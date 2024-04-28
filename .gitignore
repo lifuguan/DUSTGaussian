@@ -134,3 +134,4 @@ docs/assets/nerf_synthetic/
 out
 data
 model_zoo
+wandb

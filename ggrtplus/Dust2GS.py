@@ -74,12 +74,14 @@ class Dust2GSModel(object):
         self.dust3r = torch.nn.parallel.DistributedDataParallel(
             self.dust3r,
             device_ids=[self.args.local_rank],
-            output_device=[self.args.local_rank]
+            output_device=[self.args.local_rank],
+            find_unused_parameters=True
         )
         self.gaussian_model = torch.nn.parallel.DistributedDataParallel(
             self.gaussian_model,
             device_ids=[self.args.local_rank],
-            output_device=[self.args.local_rank]
+            output_device=[self.args.local_rank],
+            # find_unused_parameters=True
         )
     def save_checkpoint(self, score: float = 0.0, step = 0) -> None:
         assert self.state_dicts is not None

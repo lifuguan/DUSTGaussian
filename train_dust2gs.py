@@ -12,7 +12,7 @@ import torch.utils.data.distributed
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
-from utils import img2mse, mse2psnr, img_HWC2CHW, colorize, cycle, img2psnr, load_config, data_shim
+from utils import img2mse, mse2psnr, cycle, data_shim, depth_map, load_config
 from ggrtplus.pose_util import Pose, rotation_distance
 from ggrtplus.global_cfg import set_cfg
 from ggrtplus.data_loaders import dataset_dict
@@ -143,20 +143,23 @@ def train(args):
 
     silent=args.silent
 
-    state = model.switch_state_machine(state='gs_only')
-    global_step = model.start_step + 1
     epoch = 0
-    while global_step < model.start_step + args.n_iters + 1:
+    # global_step = model.start_step + 1
+    # while global_step < model.start_step + args.n_iters + 1:
+    global_step = 1
+    while global_step < args.n_iters + 1:
         np.random.seed()
         for batch in train_loader:
             time0 = time.time()
+            if global_step == 1:
+                state = model.switch_state_machine(state='gs_only')
+            elif global_step == 3000:
+                state = model.switch_state_machine(state='joint')
 
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            min_depth, max_depth = batch['depth_range'][0][0], batch['depth_range'][0][1]
 
             batch = data_shim(batch, device=device)
-
             output, feat1, feat2, cnn1, cnn2, imgs = model.correct_poses(batch, device, 1, silent)
             mode = GlobalAlignerMode.PointCloudOptimizer if len(imgs) > 2 else GlobalAlignerMode.PairViewer
             scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
@@ -240,9 +243,19 @@ def train(args):
                     for k in scalars_to_log.keys():
                         logstr += " {}: {:.3f}".format(k, scalars_to_log[k])
                     print(logstr, "{:.02f} s/iter".format(dt))
-
-                if args.expname != 'debug':
-                    wandb.log(scalars_to_log)
+                    
+                    if args.expname != 'debug':
+                        render_rgb = (255 * np.clip(ret['rgb'][0][0].permute(1,2,0).detach().cpu().numpy(), a_min=0, a_max=1.)).astype(np.uint8)
+                        render_depth = depth_map(ret['depth'][0][0] + 1e-7)
+                        est_depth = depth_map(depths[-1, ...])
+                        wandb.log({
+                            "Image": {
+                                'rendered': wandb.Image(render_rgb, caption='Rendered Image'),
+                                'gt': wandb.Image(data_gt['rgb'][0][0].permute(1,2,0).detach().cpu().numpy(), caption='GT Image')},
+                            "Depth": {'rendered': wandb.Image(render_depth.permute(1,2,0).detach().cpu().numpy(), caption='Rendered Depth'),
+                                    'est': wandb.Image(est_depth.permute(1,2,0).detach().cpu().numpy(), caption='Est Depth')}
+                                })
+                        wandb.log(scalars_to_log)
                 if (global_step+1) % args.n_checkpoint == 0:
                     print("Saving checkpoints at {} to {}...".format(global_step, out_folder))
                     model.save_checkpoint(score=0, step=global_step)
@@ -366,8 +379,8 @@ if __name__ == "__main__":
     if args.local_rank == 0 and args.expname != 'debug':
         wandb.init(
             # set the wandb project where this run will be logged
-            entity="lifuguan",
-            project="mvsplat",
+            entity="vio-research",
+            project="dust2gs",
             name=args.expname,
             config=args
         )

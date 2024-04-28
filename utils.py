@@ -13,6 +13,7 @@ from torch.autograd import Variable
 from math import exp
 import lpips
 import yaml
+from einops import rearrange
 
 lpips_alex = lpips.LPIPS(net="alex")  # best forward scores
 lpips_vgg = lpips.LPIPS(
@@ -349,3 +350,28 @@ def data_shim(data: dict, device = 'cuda:0') -> dict:
             data['target'][key] = value.to(device)
     batch['context'], batch['target'] = data['context'], data['target']
     return batch
+
+def apply_color_map(
+    x,
+    color_map,
+):
+    cmap = cm.get_cmap(color_map)
+
+    # Convert to NumPy so that Matplotlib color maps can be used.
+    mapped = cmap(x.detach().clip(min=0, max=1).cpu().numpy())[..., :3]
+
+    # Convert back to the original format.
+    return torch.tensor(mapped, device=x.device, dtype=torch.float32)
+    
+def apply_color_map_to_image(
+    image,
+    color_map ,
+) :
+    image = apply_color_map(image, color_map)
+    return rearrange(image, "... h w c -> ... c h w")
+def depth_map(result):
+            near = result[result > 0][:16_000_000].quantile(0.01).log()
+            far = result.view(-1)[:16_000_000].quantile(0.99).log()
+            result = result.log()
+            result = 1 - (result - near) / (far - near)
+            return apply_color_map_to_image(result, "turbo")

@@ -20,7 +20,7 @@
         },
         {
             "env":{
-                "CUDA_VISIBLE_DEVICES": "3"
+                "CUDA_VISIBLE_DEVICES": "0"
             },
             "name": "train: dust2gs",
             "type": "python",
@@ -29,7 +29,7 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": ["--config", "configs/train_dust2gs.yaml", "--expname", "debug",
-                    "--ckpt_path", "model_zoo/dust2gs.pth"
+                    // "--ckpt_path", "out/dust2gs_4gpu/model/model_002999.pth"
             ]
         },
     ]
