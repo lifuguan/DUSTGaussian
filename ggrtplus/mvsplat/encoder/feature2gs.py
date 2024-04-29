@@ -25,7 +25,7 @@ from ...global_cfg import get_cfg
 from .epipolar.epipolar_sampler import EpipolarSampler
 from ..encodings.positional_encoding import PositionalEncoding
 # from .epipolar.conversions import relative_disparity_to_depth
-
+import torch.nn.functional as F
 
 def relative_disparity_to_depth(
     relative_disparity: Float[Tensor, "*#batch"],
@@ -106,91 +106,50 @@ class Interpolate(nn.Module):
         return x
 
 
-class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
+class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
     gaussian_adapter: GaussianAdapter
 
     def __init__(self, cfg: EncoderCostVolumeCfg) -> None:
         super().__init__(cfg)
         # gaussians convertor
-        proj_in_channels = 512  #dust feature-dim
+        proj_in_channels = 256  #dust feature-dim
         upsample_out_channels = 128
 
         self.upsampler1 = nn.Sequential(
             nn.Conv2d(proj_in_channels, upsample_out_channels, 3, 1, 1),
-            nn.Upsample(
-                scale_factor=2,
-                mode="bilinear",
-                align_corners=True,
-            ),
             nn.GELU(),
         )
         self.upsampler2 = nn.Sequential(
-            nn.Conv2d(1024, 256, 3, 1, 1),
+            nn.Conv2d(1024, 128, 3, 1, 1),
             nn.Upsample(
-                scale_factor=8,
+                scale_factor=4,
                 mode="bilinear",
                 align_corners=True,
             ),
             nn.GELU(),
         )
         self.num_channels = 1
-        feature_dim = 256
-        last_dim = 32 
-        self.density_head = nn.Sequential(
-                nn.Conv2d(32, 32 // 2, kernel_size=3, stride=1, padding=1),
-                nn.Conv2d(32 // 2, last_dim, kernel_size=3, stride=1, padding=1),
-                nn.ReLU(True),
-                nn.Conv2d(last_dim, self.num_channels, kernel_size=1, stride=1, padding=0)
-            )
+
 
         self.gaussian_adapter = GaussianAdapter(cfg.gaussian_adapter)
-        # self.to_gaussians = nn.Sequential(
-        #     nn.ReLU(),
-        #     nn.Linear(
-        #         cfg.d_feature,
-        #         cfg.num_surfaces * (2 + self.gaussian_adapter.d_in),
-        #     ),
-        # )
-        depth_unet_feat_dim = cfg.depth_unet_feat_dim
-        input_channels = 3 + depth_unet_feat_dim + 1 + 1
-        channels = 32
-        depth_unet_channel_mult=cfg.depth_unet_channel_mult
-        depth_unet_attn_res=cfg.depth_unet_attn_res,
-        self.refine_unet = nn.Sequential(
-                nn.Conv2d(input_channels, channels, 3, 1, 1),
-                nn.GroupNorm(4, channels),
-                nn.GELU(),
-                UNetModel(
-                    image_size=None,
-                    in_channels=channels,
-                    model_channels=channels,
-                    out_channels=channels,
-                    num_res_blocks=1, 
-                    attention_resolutions=depth_unet_attn_res,
-                    channel_mult=depth_unet_channel_mult,
-                    num_head_channels=32,
-                    dims=2,
-                    postnorm=True,
-                    num_frames=2,
-                    use_cross_view_self_attn=True,
-                ),
-            )
-        self.proj_feature = nn.Conv2d(
-            upsample_out_channels, 32, 3, 1, 1
-        )
-        # self.high_resolution_skip = nn.Sequential(
-        #     nn.Conv2d(3, cfg.d_feature, 7, 1, 3),
-        #     nn.ReLU(),
-        # )
-        feature_channels = 128
-        gau_in = depth_unet_feat_dim + 3 + feature_channels
-        gaussian_raw_channels = 84
-        self.to_gaussians = nn.Sequential(
-            nn.Conv2d(gau_in, gaussian_raw_channels * 2, 3, 1, 1),
-            nn.GELU(),
-            nn.Conv2d(
-                gaussian_raw_channels * 2, gaussian_raw_channels, 3, 1, 1
-            ),
+
+        # cost volume based depth predictor
+        self.depth_predictor = DepthPredictorMultiView(
+            feature_channels=cfg.d_feature,
+            upscale_factor=cfg.downscale_factor,
+            num_depth_candidates=cfg.num_depth_candidates,
+            costvolume_unet_feat_dim=cfg.costvolume_unet_feat_dim,
+            costvolume_unet_channel_mult=tuple(cfg.costvolume_unet_channel_mult),
+            costvolume_unet_attn_res=tuple(cfg.costvolume_unet_attn_res),
+            gaussian_raw_channels=cfg.num_surfaces * (self.gaussian_adapter.d_in + 2),
+            gaussians_per_pixel=cfg.gaussians_per_pixel,
+            num_views=get_cfg().num_source_views,
+            depth_unet_feat_dim=cfg.depth_unet_feat_dim,
+            depth_unet_attn_res=cfg.depth_unet_attn_res,
+            depth_unet_channel_mult=cfg.depth_unet_channel_mult,
+            wo_depth_refine=cfg.wo_depth_refine,
+            wo_cost_volume=cfg.wo_cost_volume,
+            wo_cost_volume_refine=cfg.wo_cost_volume_refine,
         )
 
     def map_pdf_to_opacity(
@@ -211,9 +170,8 @@ class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
     def forward(
         self,
         context: dict,
-        trans_feature,
-        cnns_feature,
-        poses_rel,
+        trans_features,
+        cnn_features,
         depths,
         depth_conf,
         global_step: int,
@@ -223,52 +181,43 @@ class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
     ) -> Gaussians:
         device = context["image"].device
         b, v, _, h, w = context["image"].shape
-        b, v, _ , _, _ = trans_feature.shape
 
+        cnn_features = rearrange(cnn_features, "b v d_feature h w -> (b v) d_feature h w ")
+        trans_features = rearrange(trans_features, "b v d_feature h w -> (b v) d_feature h w ")
+        cnn_features = self.upsampler2(cnn_features)
+        trans_features = self.upsampler1(trans_features)     #卷积降dim维度  插值h w
+
+        # Sample depths from the resulting features.
+        in_feats = F.interpolate(trans_features, scale_factor=1/2, mode="bilinear").unsqueeze(0)
+        extra_info = {}
+        extra_info['images'] = rearrange(context["image"], "b v c h w -> (v b) c h w")
+        extra_info["scene_names"] = scene_names
+        gpp = self.cfg.gaussians_per_pixel
+        depths, densities, raw_gaussians = self.depth_predictor(
+            in_feats,
+            context["intrinsics"],
+            context['extrinsics'],
+            context["near"],
+            context["far"],
+            gaussians_per_pixel=gpp,
+            deterministic=deterministic,
+            extra_info=extra_info,
+            cnn_features=cnn_features.unsqueeze(0),
+        )
         # Convert the features and depths into Gaussians.
         xy_ray, _ = sample_image_grid((h, w), device)
         xy_ray = rearrange(xy_ray, "h w xy -> (h w) () xy")
-        trans_feature = rearrange(trans_feature, "b v d_feature h w -> (b v) d_feature h w ")
-
-
-        cnns_feature = rearrange(cnns_feature, "b v d_feature h w -> (b v) d_feature h w ")
-        cnns_feature = self.upsampler2(cnns_feature)
-        trans_feature = self.upsampler1(torch.cat((trans_feature,cnns_feature),dim=1))     #卷积降dim维度  插值h w
-        proj_feature = self.proj_feature(trans_feature)
-
-        #################################### density ################################
-        densities = self.density_head(proj_feature)
-        densities = torch.ones_like(densities) + densities
-
-        context["image"] = rearrange(context["image"], "b v c h w -> (b v) c h w")
-        refine_out = self.refine_unet(torch.cat([context["image"],proj_feature,rearrange(depths.unsqueeze(-1), "b v h w l -> (b v) l h w"),densities],dim=1))
-        raw_gaussians_in = [refine_out, context["image"],trans_feature]
-        raw_gaussians_in = torch.cat(raw_gaussians_in,dim=1)
-        raw_gaussians = self.to_gaussians(raw_gaussians_in)
-        raw_gaussians = rearrange(
-                raw_gaussians, "(v b) c h w -> b v (h w) c", v=v, b=b
-            )
-        
-        trans_feature = rearrange(trans_feature, "(b v) d_feature h w -> b v (h w) d_feature",b=b,v=v)
-        depths = rearrange(depths.unsqueeze(-1).unsqueeze(-1), "b v h w k l -> b v (h w) k l")
-        # depths = relative_disparity_to_depth(
-        #     rearrange(depths.unsqueeze(-1).unsqueeze(-1), "b v h w k l -> b v (h w) k l"),
-        #     rearrange(context["near"], "b v -> b v () () ()"),
-        #     rearrange(context["far"], "b v -> b v () () ()"),
-        # )
         gaussians = rearrange(
             raw_gaussians,
             "... (srf c) -> ... srf c",
             srf=self.cfg.num_surfaces,
         )
-
         offset_xy = gaussians[..., :2].sigmoid()
         pixel_size = 1 / torch.tensor((w, h), dtype=torch.float32, device=device)
         xy_ray = xy_ray + (offset_xy - 0.5) * pixel_size
         gpp = self.cfg.gaussians_per_pixel
-        densities = rearrange(densities.unsqueeze(-1), "(b v) l h w k  -> b v (h w) k l", b =b, v=v)
         gaussians = self.gaussian_adapter.forward(
-            rearrange(poses_rel, "b v i j -> b v () () () i j"),
+            rearrange(context['extrinsics'], "b v i j -> b v () () () i j"),
             rearrange(context["intrinsics"], "b v i j -> b v () () () i j"),
             rearrange(xy_ray, "b v r srf xy -> b v r srf () xy"),
             depths,

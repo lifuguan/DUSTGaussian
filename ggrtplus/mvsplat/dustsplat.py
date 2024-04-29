@@ -53,15 +53,15 @@ class dustSplat(nn.Module):
                                                         1,
                                                         total_iters=warm_up_steps)
 
-    def forward(self, batch, features,cnns,poses_rel,depths,densities,global_step):
+    def forward(self, batch, features,cnns,depths,densities,global_step):
         batch: BatchedExample = self.data_shim(batch)
         _, _, _, h, w = batch["target"]["image"].shape
 
         # Run the model.
         gaussians= self.encoder(
-            batch["context"], features,cnns,poses_rel,depths,
-        densities,global_step, False, scene_names=batch["scene"],visualization_dump = None
-        )
+            batch["context"], features, cnns ,depths, densities,global_step, 
+            False, scene_names=batch["scene"],visualization_dump = None)
+            
         output = self.decoder.forward(
             gaussians,
             batch["target"]["extrinsics"],

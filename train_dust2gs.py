@@ -246,9 +246,12 @@ def train(args):
             batch['cnn'] = batch['cnn'].permute(0, 1, 3, 2)
             batch['cnn'] = rearrange(batch['cnn'], "b v d (h w) -> b v d h w",h=H//16,w=W//16)
             batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
+            batch['context']['extrinsics'] = batch['pose']
 
-            ret, data_gt, _, _ = model.gaussian_model(batch, batch['features'], batch['cnn'], \
-                                    batch['pose'] ,batch['depths'], batch['confs'].float(), global_step)
+            ret, data_gt, _, _ = model.gaussian_model(batch, \
+                batch['features'], batch['cnn'], \
+                batch['depths'], batch['confs'].float(), \
+                global_step)
 
             # compute loss
             model.gs_optimizer.zero_grad()
