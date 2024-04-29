@@ -1,6 +1,6 @@
 import torch
 
-from ggrt.pose_util import to_hom
+from ggrtplus.pose_util import to_hom
 
 
 def get_camera_mesh(pose, depth=1):
@@ -55,7 +55,7 @@ def merge_centers(centers):
 
 
 @torch.no_grad()
-def visualize_cameras(vis, step, poses=[], cam_depth=0.5, colors=["blue", "magenta"], plot_dist=True):
+def visualize_cameras(vis, step, poses=[], caption=None, cam_depth=0.5, colors=["blue", "magenta"], plot_dist=True):
     win_name = "gt_pred"
     data = []
     
@@ -131,7 +131,7 @@ def visualize_cameras(vis, step, poses=[], cam_depth=0.5, colors=["blue", "magen
     # send data to visdom
     vis._send(dict(
         data=data,
-        win="poses",
+        win=caption,
         eid=win_name,
         layout=dict(
             title="({})".format(step),

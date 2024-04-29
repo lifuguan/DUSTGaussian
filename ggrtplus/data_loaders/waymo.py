@@ -341,6 +341,8 @@ class WaymoStaticDataset(Dataset):
                                          train_pose.flatten())).astype(np.float32)
             src_cameras.append(src_camera)
             # src_dust_imgs.append(img_dust_context)
+
+        pil_path.append(rgb_file)
         src_rgbs = np.stack(src_rgbs, axis=0)
         src_cameras = np.stack(src_cameras, axis=0)
 
@@ -369,19 +371,15 @@ class WaymoStaticDataset(Dataset):
             pix_extrinsics[:, :3, 3] /= scale
         else:
             scale = 1
+
         target_extrinsics = torch.cat([pix_src_extrinsics[0:1],pix_extrinsics],dim=0)    
         pix_src_extrinsics = self._preprocess_poses(pix_src_extrinsics)  #以参考帧第一帧为单位矩阵   
         target_extrinsics = self._preprocess_poses(target_extrinsics)     #同样修改target_extrinsics
         pix_extrinsics = target_extrinsics[1:2]
-        return {'rgb': torch.from_numpy(pix_rgb[..., :3]),
-                'camera': torch.from_numpy(camera),
-                'rgb_path': rgb_file,
-                'src_rgbs': torch.from_numpy(pix_src_rgbs[..., :3]),
-                'src_cameras': torch.from_numpy( src_cameras),
-                'depth_range': depth_range,
-                'patch_range': (8, 16),
+        return {'patch_range': (8, 16),
                 'idx': idx,
                 'scaled_shape': (378, 504), # (0, 0)
+                "dust_img": pil_path,
                 "context": {
                         "extrinsics": pix_src_extrinsics,
                         "intrinsics": pix_src_intrinsics,
@@ -390,7 +388,6 @@ class WaymoStaticDataset(Dataset):
                         "near":  depth_range[0].repeat(num_select) / scale,
                         "far": depth_range[1].repeat(num_select) / scale,
                         "index": torch.tensor([int(i) for i in src_name]),
-                        "dust_img": pil_path
                 },
                 "target": {
                         "extrinsics": pix_extrinsics,

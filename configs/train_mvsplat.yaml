@@ -2,6 +2,7 @@
 defaults:
   - mvsplat/encoder: costvolume
   - mvsplat/decoder: splatting_cuda
+silent: True
 
 ### INPUT
 expname : test
@@ -15,13 +16,13 @@ local_rank : 0
 dist_url: env://
 
 ## dataset
-train_dataset : llff_test
-train_scenes : ['room']
+train_dataset : waymo
+train_scenes : ['019']
 dataset_weights : [1]
-eval_dataset : llff_test
-eval_scenes : ['room']
+eval_dataset : waymo
+eval_scenes : ['019']
 
-num_source_views : 4
+num_source_views : 2
 workers : 8
 
 random_crop : False
@@ -43,6 +44,8 @@ aux_cof: 1.0
 optimizer:
   lr: 0.00005
   warm_up_steps: 500
+  lr_dust3r: 0.000001
+  lr_dust3r_decay_steps: 2000
 
 ### CONSOLE AND TENSORBOARD
 n_iters: 3000

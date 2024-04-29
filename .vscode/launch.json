@@ -8,19 +8,19 @@
             "env":{
                 "CUDA_VISIBLE_DEVICES": "3"
             },
-            "name": "train: mvsplat",
+            "name": "train: dust2mvsplat",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/train.py",
+            "program": "${workspaceFolder}/train_dust2mvsplat.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": ["--config", "configs/train_mvsplat.yaml", "--expname", "debug", 
-            "--ckpt_path", "model_zoo/mvsplat.pth"
+            "--ckpt_path", "model_zoo/dust2mvsplat.pth"
             ]
         },
         {
             "env":{
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "3"
             },
             "name": "train: dust2gs",
             "type": "python",
@@ -29,7 +29,8 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": ["--config", "configs/train_dust2gs.yaml", "--expname", "debug",
-                    // "--ckpt_path", "out/dust2gs_4gpu/model/model_002999.pth"
+                    // "--ckpt_path", "out/dust2gs_2gpu_joint/model/model_002999.pth"
+                    "--ckpt_path", "model_zoo/dust2gs.pth"
             ]
         },
     ]
