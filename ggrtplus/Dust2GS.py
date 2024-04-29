@@ -155,7 +155,7 @@ class Dust2GSModel(object):
         result = dict(view1=view1, view2=view2, pred1=pred1, pred2=pred2, loss=loss)
         return  result,feat1,feat2,path_1 ,path_2
 
-    def correct_poses(self, batch,device,batch_size,silent):
+    def correct_poses(self, dust_image, device, batch_size):
         """
         Args:
             fmaps: [n_views+1, c, h, w]
@@ -167,7 +167,7 @@ class Dust2GSModel(object):
             inv_depths: n_iters*[1, 1, h, w] if training else [1, 1, h, w]
             rel_poses: [n_views, n_iters, 6] if training else [n_views, 6]
         """
-        imgs = resize_dust(batch["context"]["dust_img"],size=512)  
+        imgs = resize_dust(dust_image,size=512)  
         pairs = make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True)
         # if verbose:
         #     print(f'>> Inference with model on {len(pairs)} image pairs')

@@ -154,6 +154,7 @@ class CheckPointManager(object):
         if models is not None:
             for model_name in models.keys():
                 if not model_name in state.keys():
+                    print("[WARNING] Not loading models[{}].".format(model_name))
                     continue
                 models[model_name].load_state_dict(state[model_name])
 

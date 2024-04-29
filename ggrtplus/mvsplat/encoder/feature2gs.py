@@ -136,10 +136,9 @@ class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
         self.num_channels = 1
         feature_dim = 256
         last_dim = 32 
-        self.head = nn.Sequential(
-                nn.Conv2d(feature_dim, feature_dim // 2, kernel_size=3, stride=1, padding=1),
-                Interpolate(scale_factor=2, mode="bilinear", align_corners=True),
-                nn.Conv2d(feature_dim // 2, last_dim, kernel_size=3, stride=1, padding=1),
+        self.density_head = nn.Sequential(
+                nn.Conv2d(32, 32 // 2, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(32 // 2, last_dim, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
                 nn.Conv2d(last_dim, self.num_channels, kernel_size=1, stride=1, padding=0)
             )
@@ -212,11 +211,11 @@ class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
     def forward(
         self,
         context: dict,
-        features,
-        cnns,
+        trans_feature,
+        cnns_feature,
         poses_rel,
         depths,
-        densities,
+        depth_conf,
         global_step: int,
         deterministic: bool = False,
         visualization_dump: Optional[dict] = None,
@@ -224,35 +223,33 @@ class encoderdust2gs(Encoder[EncoderCostVolumeCfg]):
     ) -> Gaussians:
         device = context["image"].device
         b, v, _, h, w = context["image"].shape
-        b, v, _ , _, _ = features.shape
+        b, v, _ , _, _ = trans_feature.shape
 
         # Convert the features and depths into Gaussians.
         xy_ray, _ = sample_image_grid((h, w), device)
         xy_ray = rearrange(xy_ray, "h w xy -> (h w) () xy")
-        features = rearrange(features, "b v d_feature h w -> (b v) d_feature h w ")
-        densities = self.head(features)
+        trans_feature = rearrange(trans_feature, "b v d_feature h w -> (b v) d_feature h w ")
 
 
+        cnns_feature = rearrange(cnns_feature, "b v d_feature h w -> (b v) d_feature h w ")
+        cnns_feature = self.upsampler2(cnns_feature)
+        trans_feature = self.upsampler1(torch.cat((trans_feature,cnns_feature),dim=1))     #卷积降dim维度  插值h w
+        proj_feature = self.proj_feature(trans_feature)
 
-        cnns = rearrange(cnns, "b v d_feature h w -> (b v) d_feature h w ")
-        cnns = self.upsampler2(cnns)
-        features = self.upsampler1(torch.cat((features,cnns),dim=1))     #卷积降dim维度  插值h w
-        # skip = rearrange(context["image"], "b v c h w -> (b v) c h w")
-        # skip = self.high_resolution_skip(skip)
-        # features = features + skip
-        proj_feature = self.proj_feature(features)
+        #################################### density ################################
+        densities = self.density_head(proj_feature)
+        densities = torch.ones_like(densities) + densities
 
-        # depths = rearrange(depths.unsqueeze(-1), "b v h w l -> (b v) l h w")
         context["image"] = rearrange(context["image"], "b v c h w -> (b v) c h w")
         refine_out = self.refine_unet(torch.cat([context["image"],proj_feature,rearrange(depths.unsqueeze(-1), "b v h w l -> (b v) l h w"),densities],dim=1))
-        raw_gaussians_in = [refine_out, context["image"],features]
+        raw_gaussians_in = [refine_out, context["image"],trans_feature]
         raw_gaussians_in = torch.cat(raw_gaussians_in,dim=1)
         raw_gaussians = self.to_gaussians(raw_gaussians_in)
         raw_gaussians = rearrange(
                 raw_gaussians, "(v b) c h w -> b v (h w) c", v=v, b=b
             )
         
-        features = rearrange(features, "(b v) d_feature h w -> b v (h w) d_feature",b=b,v=v)
+        trans_feature = rearrange(trans_feature, "(b v) d_feature h w -> b v (h w) d_feature",b=b,v=v)
         depths = rearrange(depths.unsqueeze(-1).unsqueeze(-1), "b v h w k l -> b v (h w) k l")
         # depths = relative_disparity_to_depth(
         #     rearrange(depths.unsqueeze(-1).unsqueeze(-1), "b v h w k l -> b v (h w) k l"),
