@@ -66,3 +66,6 @@ wo_cost_volume: false          # Table 3: w/o cost volume
 wo_backbone_cross_attn: false  # Table 3: w/o cross-view attention
 wo_cost_volume_refine: false   # Table 3: w/o U-Net
 use_epipolar_trans: false      # Table B: w/ Epipolar Transformer
+
+# dpeth predictor ckpt
+depth_predictor_weights_path: model_zoo/mvsplat_depth_predictor.pth

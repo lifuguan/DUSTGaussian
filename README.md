@@ -1,8 +1,10 @@
-export CUDA_VISIBLE_DEVICES=0,2
-python -m torch.distributed.launch --nproc_per_node=2 \
+export CUDA_VISIBLE_DEVICES=0,2,4,5
+python -m torch.distributed.launch --nproc_per_node=4 \
        --master_port=$(( RANDOM % 1000 + 50000 )) \
-       train_dust2gs.py --config configs/train_dust2gs.yaml \
-       --ckpt_path model_zoo/dust2gs_wo_gs.pth --expname generalized_dust2gs_costvolume
+       train_dust2gs.py --config configs/train_dust2gs_generalized.yaml \
+       --ckpt_path model_zoo/dust2gs_wo_gs.pth \
+       --use_pred_pose False \
+       --expname generalized_dust2gs_costvolume
 
 
 

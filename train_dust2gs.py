@@ -149,7 +149,7 @@ def train(args):
         num_workers=args.workers,
         pin_memory=True,
         sampler=train_sampler,
-        shuffle=True if train_sampler is None else False,
+        shuffle=False,
     )
 
     # create validation dataset
@@ -169,11 +169,8 @@ def train(args):
     scalars_to_log = {}
 
     silent=args.silent
-    # visdom_ins = visdom.Visdom(server='localhost', port=8097, env='splatam')
 
     epoch = 0
-    # global_step = model.start_step + 1
-    # while global_step < model.start_step + args.n_iters + 1:
     global_step = 1
     while global_step < args.n_iters + 1:
         np.random.seed()
@@ -182,8 +179,8 @@ def train(args):
             time0 = time.time()
             if global_step == 1:
                 state = model.switch_state_machine(state='gs_only')
-            elif global_step == 3000:
-                state = model.switch_state_machine(state='joint')
+            # elif global_step == 3000:
+            #     state = model.switch_state_machine(state='joint')
 
             if args.distributed:
                 train_sampler.set_epoch(epoch)
@@ -246,8 +243,10 @@ def train(args):
             _,_,_,H,W = batch["context"]['image'].shape
             batch['cnn'] = batch['cnn'].permute(0, 1, 3, 2)
             batch['cnn'] = rearrange(batch['cnn'], "b v d (h w) -> b v d h w",h=H//16,w=W//16)
-            batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
-            batch['context']['extrinsics'] = batch['pose']
+
+            if args.use_pred_pose == True:
+                batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
+                batch['context']['extrinsics'] = batch['pose']
 
             ret, data_gt, _, _ = model.gaussian_model(batch, \
                 batch['features'], batch['cnn'], \

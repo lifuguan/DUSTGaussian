@@ -12,9 +12,8 @@ from ...dataset.shims.patch_shim import apply_patch_shim
 from ...dataset.types import BatchedExample, DataShim
 from ...geometry.projection import sample_image_grid
 from ..types import Gaussians
-from .backbone import (
-    BackboneMultiview,
-)
+from .backbone.unimatch.backbone import ResidualBlock
+from .costvolume.ldm_unet.unet import Upsample
 from .common.gaussian_adapter import GaussianAdapter, GaussianAdapterCfg
 from .encoder import Encoder
 from .costvolume.depth_predictor_multiview import DepthPredictorMultiView
@@ -57,6 +56,7 @@ class EncoderCostVolumeCfg:
     opacity_mapping: OpacityMappingCfg
     gaussians_per_pixel: int
     unimatch_weights_path: str | None
+    depth_predictor_weights_path: str | None
     downscale_factor: int
     shim_patch_size: int
     multiview_trans_attn_split: int
@@ -112,24 +112,20 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
     def __init__(self, cfg: EncoderCostVolumeCfg) -> None:
         super().__init__(cfg)
         # gaussians convertor
-        proj_in_channels = 256  #dust feature-dim
-        upsample_out_channels = 128
 
-        self.upsampler1 = nn.Sequential(
-            nn.Conv2d(proj_in_channels, upsample_out_channels, 3, 1, 1),
-            nn.GELU(),
-        )
-        self.upsampler2 = nn.Sequential(
-            nn.Conv2d(1024, 128, 3, 1, 1),
-            nn.Upsample(
-                scale_factor=4,
-                mode="bilinear",
-                align_corners=True,
-            ),
-            nn.GELU(),
-        )
-        self.num_channels = 1
+        self.in_planes = 256  # for Transformer features
+        self.trans_adaptor = self._make_adaptor_layer(
+                128, stride=1, norm_layer=nn.InstanceNorm2d, upscale = False)
 
+        self.in_planes = 1024  # for CNN features
+        input_block_chans = [512, 256, 128]
+        cnns_adaptor_layers = []
+        for input_block_chan in input_block_chans:
+            cnns_adaptor_layers.append(self._make_adaptor_layer(
+                input_block_chan, stride=1, norm_layer=nn.InstanceNorm2d,
+                upscale = True if input_block_chan != input_block_chans[-1] else False)
+            )
+        self.cnns_adaptor = nn.Sequential(*cnns_adaptor_layers)
 
         self.gaussian_adapter = GaussianAdapter(cfg.gaussian_adapter)
 
@@ -151,6 +147,17 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
             wo_cost_volume=cfg.wo_cost_volume,
             wo_cost_volume_refine=cfg.wo_cost_volume_refine,
         )
+
+    def _make_adaptor_layer(self, dim, stride=1, dilation=1, norm_layer=nn.InstanceNorm2d, upscale=True):
+        layer1 = ResidualBlock(self.in_planes, dim, norm_layer=norm_layer, stride=stride, dilation=dilation)
+        layer2 = ResidualBlock(dim, dim, norm_layer=norm_layer, stride=1, dilation=dilation)
+        if upscale == True:
+            uplayer = Upsample(dim, use_conv=True, dims=2)
+            layers = (layer1, layer2, uplayer)
+        else:
+            layers = (layer1, layer2)
+        self.in_planes = dim
+        return nn.Sequential(*layers)
 
     def map_pdf_to_opacity(
         self,
@@ -183,12 +190,12 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
         b, v, _, h, w = context["image"].shape
 
         cnn_features = rearrange(cnn_features, "b v d_feature h w -> (b v) d_feature h w ")
+        cnn_features = self.cnns_adaptor(cnn_features)
         trans_features = rearrange(trans_features, "b v d_feature h w -> (b v) d_feature h w ")
-        cnn_features = self.upsampler2(cnn_features)
-        trans_features = self.upsampler1(trans_features)     #卷积降dim维度  插值h w
+        trans_features = self.trans_adaptor(trans_features)     #卷积降dim维度  插值h w
+        in_feats = F.interpolate(trans_features, scale_factor=1/2, mode="bilinear").unsqueeze(0)
 
         # Sample depths from the resulting features.
-        in_feats = F.interpolate(trans_features, scale_factor=1/2, mode="bilinear").unsqueeze(0)
         extra_info = {}
         extra_info['images'] = rearrange(context["image"], "b v c h w -> (v b) c h w")
         extra_info["scene_names"] = scene_names

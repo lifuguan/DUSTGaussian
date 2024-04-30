@@ -188,11 +188,7 @@ class LLFFTestDataset(Dataset):
             scale = 1
 
         
-        return {'rgb': torch.from_numpy(pix_rgb[..., :3]),
-                'camera': torch.from_numpy(camera),
-                'rgb_path': rgb_file,
-                'src_rgbs': torch.from_numpy(pix_src_rgbs[..., :3]),
-                'src_cameras': torch.from_numpy(src_cameras),
+        return {
                 'depth_range': depth_range,
                 'idx': idx,
                 'scaled_shape': (0, 0), # (378, 504)

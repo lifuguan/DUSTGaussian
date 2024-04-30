@@ -10,6 +10,7 @@ def config_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     parser.add_argument("--local_rank", type=int, default=0, help="rank for distributed training")
     parser.add_argument("--ckpt_path", type=str, default="")
+    parser.add_argument("--use_pred_pose", type=bool, default=True)
     ########## dataset options ##########
     ## train and eval dataset
     # parser.add_argument(
