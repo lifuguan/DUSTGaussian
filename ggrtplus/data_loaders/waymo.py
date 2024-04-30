@@ -264,9 +264,12 @@ class WaymoStaticDataset(Dataset):
         idx = idx % len(self.render_rgb_files)
         rgb_file = self.render_rgb_files[idx]
         depth_file = self.render_depth_files[idx]
-        render_name = rgb_file[-9:-4]
+        scene_name = rgb_file.split('/')[-3]
         rgb = imageio.imread(rgb_file).astype(np.float32) / 255.
-        depth = imageio.imread(depth_file).astype(np.float32)
+        if os.path.exists(depth_file):
+            depth = imageio.imread(depth_file).astype(np.float32)
+        else: 
+            depth = None
         render_pose = self.render_poses[idx]
         # img_dust_target = exif_transpose(PIL.Image.open(rgb_file)).convert('RGB')        
         # translation = np.array([3, 0, 0])
@@ -364,7 +367,7 @@ class WaymoStaticDataset(Dataset):
             scale = (a - b).norm()
             if scale < 0.001:
                 print(
-                    f"Skipped {scene} because of insufficient baseline "
+                    f"Skipped {scene_name} because of insufficient baseline "
                     f"{scale:.6f}"
                 )
             pix_src_extrinsics[:, :3, 3] /= scale
@@ -380,6 +383,7 @@ class WaymoStaticDataset(Dataset):
                 'idx': idx,
                 'scaled_shape': (378, 504), # (0, 0)
                 "dust_img": pil_path,
+                "scene_name": scene_name,
                 "context": {
                         "extrinsics": pix_src_extrinsics,
                         "intrinsics": pix_src_intrinsics,

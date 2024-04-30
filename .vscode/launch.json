@@ -20,7 +20,7 @@
         },
         {
             "env":{
-                "CUDA_VISIBLE_DEVICES": "7"
+                "CUDA_VISIBLE_DEVICES": "3"
             },
             "name": "train: dust2gs",
             "type": "python",

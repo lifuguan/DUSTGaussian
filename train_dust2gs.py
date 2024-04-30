@@ -149,7 +149,7 @@ def train(args):
         num_workers=args.workers,
         pin_memory=True,
         sampler=train_sampler,
-        shuffle=True if train_sampler is None else False,
+        shuffle=False,
     )
 
     # create validation dataset
@@ -178,6 +178,7 @@ def train(args):
     while global_step < args.n_iters + 1:
         np.random.seed()
         for batch in train_loader:
+            scene_name = batch['scene_name']
             time0 = time.time()
             if global_step == 1:
                 state = model.switch_state_machine(state='gs_only')
@@ -280,7 +281,7 @@ def train(args):
                     scalars_to_log["train/t_err"] = pose_error['t_error_mean']
                     # visualize_cameras(visdom_ins, step=global_step, poses=[poses_est, poses_gt], cam_depth=0.1, caption="not aligned")
 
-                    logstr = "{} Epoch: {} ".format(args.expname, epoch)
+                    logstr = "{} Epoch: {} Scene: {} ".format(args.expname, epoch, scene_name)
                     for k in scalars_to_log.keys():
                         logstr += " {}: {:.3f}".format(k, scalars_to_log[k])
                     print(logstr, " | {:.02f} s/iter".format(dt))
