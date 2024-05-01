@@ -246,8 +246,8 @@ def train(args):
             _,_,_,H,W = batch["context"]['image'].shape
             batch['cnn'] = batch['cnn'].permute(0, 1, 3, 2)
             batch['cnn'] = rearrange(batch['cnn'], "b v d (h w) -> b v d h w",h=H//16,w=W//16)
-            batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
-            batch['context']['extrinsics'] = batch['pose']
+            # batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
+            # batch['context']['extrinsics'] = batch['pose']
 
             ret, data_gt, _, _ = model.gaussian_model(batch, \
                 batch['features'], batch['cnn'], \

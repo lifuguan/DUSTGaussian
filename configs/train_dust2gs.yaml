@@ -22,10 +22,10 @@ dist_url: env://
 # eval_dataset : llff_test
 # eval_scenes : ['room']
 train_dataset : waymo
-train_scenes : []
+train_scenes : ['019']
 dataset_weights : [1]
 eval_dataset : waymo
-eval_scenes : []
+eval_scenes : ['019']
 
 num_source_views : 2
 workers : 8
