@@ -53,10 +53,10 @@ optimizer:
   lr_dust3r_decay_steps: 2000
 
 ### CONSOLE AND TENSORBOARD
-n_iters: 20000
+n_iters: 6000
 n_validation : 1000
 n_logging : 2
-n_checkpoint : 5000
+n_checkpoint : 2000
 visdom_port : 9000
 
 ### evaluation options

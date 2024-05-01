@@ -182,8 +182,6 @@ def train(args):
             time0 = time.time()
             if global_step == 1:
                 state = model.switch_state_machine(state='gs_only')
-            elif global_step == 3000:
-                state = model.switch_state_machine(state='joint')
 
             if args.distributed:
                 train_sampler.set_epoch(epoch)
