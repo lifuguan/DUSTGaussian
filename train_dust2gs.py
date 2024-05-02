@@ -191,7 +191,7 @@ def train(args):
             scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
             lr = 0.01
             if mode == GlobalAlignerMode.PointCloudOptimizer:
-                loss = scene.compute_global_alignment(init='mst', niter=0, schedule='linear', lr=lr)
+                loss = scene.compute_global_alignment(init='mst', niter=300, schedule='linear', lr=lr)
 
             depths = scene.get_depthmaps()
             depths = torch.stack([d.unsqueeze(0) for d in depths], dim=0)
@@ -219,6 +219,8 @@ def train(args):
 
                 _convert_scene_output_to_glb("out", rgbimg, pts3d, mask, focals, cams2world, as_pointcloud=True,
                                         transparent_cams=False, cam_size=0.05, silent=silent)    
+            
+            ######################################  data shim for DustSplat  #########################################
             batch = data_shim(batch, device=device)
 
             # 批量操作
@@ -247,22 +249,22 @@ def train(args):
             # batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
             # batch['context']['extrinsics'] = batch['pose']
 
-            ret, data_gt, _, _ = model.gaussian_model(batch, \
-                batch['features'], batch['cnn'], \
-                batch['depths'], batch['confs'].float(), \
-                global_step)
+            ret, data_gt, _, _ = model.gaussian_model(batch, batch['features'], batch['cnn'], \
+                batch['depths'], batch['confs'].float(), global_step)
 
             # compute loss
             model.gs_optimizer.zero_grad()
-            model.dust3r_optimizer.zero_grad()
+            if state != 'gs_only':
+                model.dust3r_optimizer.zero_grad()
             coarse_loss = rgb_loss(ret, data_gt)
             loss_all = coarse_loss
 
             loss_all.backward()
             model.gs_optimizer.step()
             model.gs_scheduler.step()
-            model.dust3r_optimizer.step()
-            model.dust3r_scheduler.step()
+            if state != 'gs_only':
+                model.dust3r_optimizer.step()
+                model.dust3r_scheduler.step()
 
             scalars_to_log["train/step"] = global_step
             scalars_to_log["lr"] = model.gs_scheduler.get_last_lr()[0]
