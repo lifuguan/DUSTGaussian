@@ -22,10 +22,10 @@ dist_url: env://
 # eval_dataset : llff_test
 # eval_scenes : ['room']
 train_dataset : waymo
-train_scenes : ['019']
+train_scenes : []
 dataset_weights : [1]
 eval_dataset : waymo
-eval_scenes : ['019']
+eval_scenes : []
 
 num_source_views : 2
 workers : 8
@@ -53,10 +53,10 @@ optimizer:
   lr_dust3r_decay_steps: 2000
 
 ### CONSOLE AND TENSORBOARD
-n_iters: 6000
+n_iters: 20000
 n_validation : 1000
 n_logging : 2
-n_checkpoint : 1000
+n_checkpoint : 2000
 visdom_port : 9000
 
 ### evaluation options

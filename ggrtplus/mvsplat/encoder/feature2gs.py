@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional, List
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor, nn
@@ -12,20 +13,14 @@ from ...dataset.shims.patch_shim import apply_patch_shim
 from ...dataset.types import BatchedExample, DataShim
 from ...geometry.projection import sample_image_grid
 from ..types import Gaussians
-from .backbone import (
-    BackboneMultiview,
-)
+from .backbone.unimatch.backbone import ResidualBlock
+from .costvolume.ldm_unet.unet import Upsample
 from .common.gaussian_adapter import GaussianAdapter, GaussianAdapterCfg
 from .encoder import Encoder
-from .costvolume.depth_predictor_multiview import DepthPredictorMultiView
+from .common.plucker import plucker_embedding
 from .visualization.encoder_visualizer_costvolume_cfg import EncoderVisualizerCostVolumeCfg
-
 from ...global_cfg import get_cfg
-
-from .epipolar.epipolar_sampler import EpipolarSampler
-from ..encodings.positional_encoding import PositionalEncoding
 # from .epipolar.conversions import relative_disparity_to_depth
-
 
 def relative_disparity_to_depth(
     relative_disparity: Float[Tensor, "*#batch"],
@@ -112,53 +107,35 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
     def __init__(self, cfg: EncoderCostVolumeCfg) -> None:
         super().__init__(cfg)
 
-        # multi-view Transformer backbone
-        if cfg.use_epipolar_trans:
-            self.epipolar_sampler = EpipolarSampler(
-                num_views=get_cfg().num_source_views,
-                num_samples=32,
+        # CNN Dust3R -> RGB features
+        self.in_planes = 2048  # for CNN features
+        cnn_block_chans = [1024, 512, 256, 128]
+        cnns_adaptor_layers = []
+        for input_block_chan in cnn_block_chans:
+            cnns_adaptor_layers.append(self._make_adaptor_layer(
+                input_block_chan, stride=1, norm_layer=nn.InstanceNorm2d,
+                upscale = True if input_block_chan != cnn_block_chans[-1] else False)
             )
-            self.depth_encoding = nn.Sequential(
-                (pe := PositionalEncoding(10)),
-                nn.Linear(pe.d_out(1), cfg.d_feature),
+        self.cnns_adaptor = nn.Sequential(*cnns_adaptor_layers)
+
+        # Transformer Dust3R -> RGB features
+        self.in_planes = 512  # for CNN features
+        trans_block_chans = [256, 128]
+        trans_adaptor_layers = []
+        for input_block_chan in trans_block_chans:
+            trans_adaptor_layers.append(self._make_adaptor_layer(
+                input_block_chan, stride=1, norm_layer=nn.InstanceNorm2d,
+                upscale = True if input_block_chan != trans_block_chans[-1] else False)
             )
-        self.backbone = BackboneMultiview(
-            feature_channels=cfg.d_feature,
-            downscale_factor=cfg.downscale_factor,
-            no_cross_attn=cfg.wo_backbone_cross_attn,
-            use_epipolar_trans=cfg.use_epipolar_trans,
-        )
-        ckpt_path = cfg.unimatch_weights_path
-        if cfg.unimatch_weights_path is None:
-            print("==> Train multi-view transformer backbone from scratch")
-        else:
-            print("==> Load multi-view transformer backbone checkpoint: %s" % ckpt_path)
-            unimatch_pretrained_model = torch.load(ckpt_path)["model"]
-            updated_state_dict = OrderedDict(
-                {
-                    k: v
-                    for k, v in unimatch_pretrained_model.items()
-                    if k in self.backbone.state_dict()
-                }
-            )
-            # NOTE: when wo cross attn, we added ffns into self-attn, but they have no pretrained weight
-            is_strict_loading = not cfg.wo_backbone_cross_attn
-            self.backbone.load_state_dict(updated_state_dict, strict=is_strict_loading)
+        self.trans_adaptor = nn.Sequential(*trans_adaptor_layers)
 
-
-        # gaussians convertor
-        proj_in_channels = 256  #dust feature-dim
-        upsample_out_channels = 128
-
-        self.upsampler1 = nn.Sequential(
-            nn.Conv2d(proj_in_channels, upsample_out_channels, 3, 1, 1),
-            nn.Upsample(
-                scale_factor=4,
-                mode="bilinear",
-                align_corners=True,
-            ),
+        fused_channel = cnn_block_chans[-1] + cnn_block_chans[-1]
+        self.upsampler = nn.Sequential(
+            nn.Conv2d(fused_channel, fused_channel, 3, 1, 1),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
             nn.GELU(),
         )
+
         self.num_channels = 1
         feature_dim = 256
         last_dim = 32 
@@ -172,12 +149,12 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
         self.gaussian_adapter = GaussianAdapter(cfg.gaussian_adapter)
 
         depth_unet_feat_dim = cfg.depth_unet_feat_dim
-        input_channels = 3 + depth_unet_feat_dim + 1 + 1
+        input_channels = 3 + depth_unet_feat_dim + 1
         channels = 32
         depth_unet_channel_mult=cfg.depth_unet_channel_mult
         depth_unet_attn_res=cfg.depth_unet_attn_res,
         self.refine_unet = nn.Sequential(
-                nn.Conv2d(input_channels, channels, 3, 1, 1),
+                nn.Conv2d(42, channels, 3, 1, 1),
                 nn.GroupNorm(4, channels),
                 nn.GELU(),
                 UNetModel(
@@ -196,14 +173,14 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
                 ),
             )
         self.proj_feature = nn.Conv2d(
-            upsample_out_channels, 32, 3, 1, 1
+            fused_channel, 32, 3, 1, 1
         )
         # self.high_resolution_skip = nn.Sequential(
         #     nn.Conv2d(3, cfg.d_feature, 7, 1, 3),
         #     nn.ReLU(),
         # )
-        feature_channels = 128
-        gau_in = depth_unet_feat_dim + 3 + feature_channels
+        feature_channels = 32
+        gau_in = depth_unet_feat_dim + 3
         gaussian_raw_channels = 84
         self.to_gaussians = nn.Sequential(
             nn.Conv2d(gau_in, gaussian_raw_channels * 2, 3, 1, 1),
@@ -212,6 +189,17 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
                 gaussian_raw_channels * 2, gaussian_raw_channels, 3, 1, 1
             ),
         )
+
+    def _make_adaptor_layer(self, dim, stride=1, dilation=1, norm_layer=nn.InstanceNorm2d, upscale=True):
+        layer1 = ResidualBlock(self.in_planes, dim, norm_layer=norm_layer, stride=stride, dilation=dilation)
+        layer2 = ResidualBlock(dim, dim, norm_layer=norm_layer, stride=1, dilation=dilation)
+        if upscale == True:
+            uplayer = Upsample(dim, use_conv=True, dims=2)
+            layers = (layer1, layer2, uplayer)
+        else:
+            layers = (layer1, layer2)
+        self.in_planes = dim
+        return nn.Sequential(*layers)
 
     def map_pdf_to_opacity(
         self,
@@ -231,8 +219,8 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
     def forward(
         self,
         context: dict,
-        trans_feature,
-        cnns_feature,
+        trans_features,
+        cnns_features,
         poses_rel,
         depths,
         depth_conf,
@@ -244,67 +232,43 @@ class EncoderDust2GS(Encoder[EncoderCostVolumeCfg]):
         device = context["image"].device
         b, v, _, h, w = context["image"].shape
 
-        # Encode the context images.
-        if self.cfg.use_epipolar_trans:
-            epipolar_kwargs = {
-                "epipolar_sampler": self.epipolar_sampler,
-                "depth_encoding": self.depth_encoding,
-                "extrinsics": context["extrinsics"],
-                "intrinsics": context["intrinsics"],
-                "near": context["near"],
-                "far": context["far"],
-            }
-        else:
-            epipolar_kwargs = None
-        trans_feature, cnn_feature = self.backbone(
-            context["image"],
-            attn_splits=self.cfg.multiview_trans_attn_split,
-            return_cnn_features=True,
-            epipolar_kwargs=epipolar_kwargs,
-        )
-        
-        concat_features = self.upsampler1(torch.cat((trans_feature[0],cnn_feature[0]),dim=1))
+        cnns_features = self.cnns_adaptor(cnns_features)
+        trans_features = self.trans_adaptor(trans_features)     #卷积降dim维度  插值h w
+        trans_features = F.interpolate(trans_features, scale_factor=1/2, mode="bilinear")
+
+        concat_features = self.upsampler(torch.cat((trans_features,cnns_features),dim=1))
         proj_feature = self.proj_feature(concat_features)
 
         #################################### density ################################
-        densities = self.density_head(proj_feature)
-        densities = torch.ones_like(densities) + densities
-
         context["image"] = rearrange(context["image"], "b v c h w -> (b v) c h w")
-        refine_out = self.refine_unet(torch.cat([context["image"],proj_feature,rearrange(depths.unsqueeze(-1), "b v h w l -> (b v) l h w"),densities],dim=1))
-        raw_gaussians_in = [refine_out, context["image"],concat_features]
-        raw_gaussians_in = torch.cat(raw_gaussians_in,dim=1)
-        raw_gaussians = self.to_gaussians(raw_gaussians_in)
+        plucker_emb = plucker_embedding(h, w, context["intrinsics"][0], poses_rel[0], jitter=False)
+        refine_out = self.refine_unet(torch.cat([context["image"],proj_feature,  \
+                    rearrange(depths.unsqueeze(-1), "b v h w l -> (b v) l h w"), plucker_emb],dim=1))
+        
+        densities = self.density_head(refine_out)
+        densities = rearrange(densities.unsqueeze(-1), "(b v) l h w k  -> b v (h w) k l", b =b, v=v)
+        
+        raw_gaussians = self.to_gaussians(torch.cat([refine_out, context["image"]],dim=1))
         raw_gaussians = rearrange(
                 raw_gaussians, "(v b) c h w -> b v (h w) c", v=v, b=b
             )
+        gaussians = rearrange(raw_gaussians, "... (srf c) -> ... srf c", srf=self.cfg.num_surfaces)
         
-
         depths = rearrange(depths.unsqueeze(-1).unsqueeze(-1), "b v h w k l -> b v (h w) k l")
 
         xy_ray, _ = sample_image_grid((h, w), device)
         xy_ray = rearrange(xy_ray, "h w xy -> (h w) () xy")
-        gaussians = rearrange(
-            raw_gaussians,
-            "... (srf c) -> ... srf c",
-            srf=self.cfg.num_surfaces,
-        )
         offset_xy = gaussians[..., :2].sigmoid()
         pixel_size = 1 / torch.tensor((w, h), dtype=torch.float32, device=device)
         xy_ray = xy_ray + (offset_xy - 0.5) * pixel_size
         gpp = self.cfg.gaussians_per_pixel
-        densities = rearrange(densities.unsqueeze(-1), "(b v) l h w k  -> b v (h w) k l", b =b, v=v)
         gaussians = self.gaussian_adapter.forward(
             rearrange(poses_rel, "b v i j -> b v () () () i j"),
             rearrange(context["intrinsics"], "b v i j -> b v () () () i j"),
             rearrange(xy_ray, "b v r srf xy -> b v r srf () xy"),
             depths,
-            # rearrange(depths),
             self.map_pdf_to_opacity(densities, global_step) / gpp,
-            rearrange(
-                gaussians[..., 2:],
-                "b v r srf c -> b v r srf () c",
-            ),
+            rearrange(gaussians[..., 2:], "b v r srf c -> b v r srf () c",),
             (h, w),
         )
         

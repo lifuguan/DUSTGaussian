@@ -227,3 +227,53 @@ class MvSplat(nn.Module):
         else:
             target_gt = {'rgb': batch["target"]["image"]}
         return ret, target_gt, visualization_dump, gaussians, single_view_outputs
+
+    def render_video(self, batch, global_step):
+        batch: BatchedExample = self.data_shim(batch)
+        _, _, _, h, w = batch["target"]["image"].shape
+        visualization_dump = {}
+
+        # Run the model.
+        gaussians = self.encoder(
+            batch["context"], global_step, 
+            deterministic=True, 
+            scene_names=batch["scene"],
+            visualization_dump=visualization_dump,
+        )
+
+        novel_output = self.decoder.forward(
+                    gaussians,
+                    batch["target"]["extrinsics"],
+                    batch["target"]["intrinsics"],
+                    batch["target"]["near"],
+                    batch["target"]["far"],
+                    (h, w),
+                    depth_mode='depth')
+
+        # target_extrinsics = interpolate_extrinsics(
+        #         batch["context"]["extrinsics"][0, 0],
+        #         batch["context"]["extrinsics"][0, -1], torch.from_numpy(np.linspace(0, 1, num=28)).to(batch["target"]["extrinsics"].device))
+        # target_extrinsics = torch.cat([batch["context"]["extrinsics"][0, 0:1], target_extrinsics, batch["context"]["extrinsics"][0, -1:]], dim=0)
+        target_extrinsics = interpolate_extrinsics(
+                batch["context"]["extrinsics"][0, 0],
+                batch["context"]["extrinsics"][0, -1], torch.from_numpy(np.linspace(0, 1, num=28)).to(batch["target"]["extrinsics"].device))
+        target_extrinsics = torch.cat([batch["context"]["extrinsics"][0, 0:1], target_extrinsics, batch["context"]["extrinsics"][0, -1:]], dim=0)
+
+        video = []
+        for target_extrinsic in target_extrinsics:
+            output = self.decoder.forward(
+                        gaussians,
+                        target_extrinsic[None][None],
+                        batch["target"]["intrinsics"],
+                        batch["target"]["near"],
+                        batch["target"]["far"],
+                        (h, w),
+                        depth_mode='depth')
+            clip = (255 * np.clip(output.color[0][0].permute(1,2,0).detach().cpu().numpy(), a_min=0, a_max=1.)).astype(np.uint8)
+            video.append(clip)
+
+        if 'depth' in batch["target"].keys():
+            target_gt = {'rgb': batch["target"]["image"], 'depth': batch["target"]["depth"]}
+        else:
+            target_gt = {'rgb': batch["target"]["image"]}
+        return novel_output, video, target_gt, visualization_dump, gaussians

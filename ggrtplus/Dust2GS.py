@@ -155,6 +155,7 @@ class Dust2GSModel(object):
         result = dict(view1=view1, view2=view2, pred1=pred1, pred2=pred2, loss=loss)
         return  result,feat1,feat2,path_1 ,path_2
 
+    @torch.no_grad()
     def correct_poses(self, dust_image, device, batch_size):
         """
         Args:
@@ -205,7 +206,7 @@ class Dust2GSModel(object):
 
         return result,feat1_list,feat2_list,cnn1_list,cnn2_list,imgs
 
-    def switch_state_machine(self, state='joint') -> str:
+    def switch_state_machine(self, state='gs_only') -> str:
         if state == 'gs_only':
             self._set_dust3r_state(opt=False)
             self._set_gaussian_state(opt=True)

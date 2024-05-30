@@ -8,6 +8,17 @@
             "env":{
                 "CUDA_VISIBLE_DEVICES": "3"
             },
+            "name": "convert",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/convert_scripts/convert_nerf_to_waymo.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+        },        
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "3"
+            },
             "name": "train: dust2mvsplat",
             "type": "python",
             "request": "launch",
@@ -15,7 +26,64 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": ["--config", "configs/train_mvsplat.yaml", "--expname", "debug", 
-            "--ckpt_path", "model_zoo/dust2mvsplat.pth"
+            "--ckpt_path", "out/dust2mvsplat_2gpu/model/model_002999.pth"
+            ]
+        },
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "1"
+            },
+            "name": "train: dust2mvsplat_baidu",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_dust2mvsplat_baidu.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--config", "configs/eval_mvsplat_baidu.yaml", "--expname", "baidu_004", 
+            "--ckpt_path", "out/dust2mvsplat_2gpu/model/model_002999.pth"
+            ]
+        },
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "1"
+            },
+            "name": "train: dust2mvsplat_waymo_scape",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_dust2mvsplat_baidu.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--config", "configs/eval_mvsplat_waymo_scape.yaml", "--expname", "mvsplat_waymo_scape_gen", 
+            "--ckpt_path", "out/dust2mvsplat_2gpu/model/model_002999.pth"
+            ]
+        },
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "3"
+            },
+            "name": "eval: dust2mvsplat",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/eval_dust2mvsplat.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--config", "configs/eval_mvsplat_baidu.yaml", "--expname", "mvsplat_baidu_dust3r", 
+            "--ckpt_path", "out/dust2mvsplat_2gpu/model/model_002999.pth"
+            ]
+        },
+        {
+            "env":{
+                "CUDA_VISIBLE_DEVICES": "3"
+            },
+            "name": "eval: dust2mvsplat-waymo_scape",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/eval_dust2mvsplat.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["--config", "configs/eval_mvsplat_waymo_scape.yaml", "--expname", "mvsplat_waymo_scape_ft", 
+            // "--ckpt_path", "./out/dust2mvsplat_waymo_scape/model/model_019999.pth"
+            "--ckpt_path", "./out/dust2mvsplat_waymo_scape/model/model_000499.pth"
             ]
         },
         {

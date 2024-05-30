@@ -106,24 +106,6 @@ def init_distributed_mode(args):
     torch.distributed.barrier()
     setup_for_distributed(args.local_rank == 0)
 
-def worker_init_fn(worker_id):
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
-
-
-def synchronize():
-    """
-    Helper function to synchronize (barrier) among all processes when
-    using distributed training
-    """
-    if not dist.is_available():
-        return
-    if not dist.is_initialized():
-        return
-    world_size = dist.get_world_size()
-    if world_size == 1:
-        return
-    dist.barrier()
-
 def train(args):
 
     device = "cuda:{}".format(args.local_rank)
@@ -174,17 +156,13 @@ def train(args):
     epoch = 0
     # global_step = model.start_step + 1
     # while global_step < model.start_step + args.n_iters + 1:
+    state = model.switch_state_machine(state='gs_only')
     global_step = 1
     while global_step < args.n_iters + 1:
         np.random.seed()
         for batch in train_loader:
             scene_name = batch['scene_name']
             time0 = time.time()
-            if global_step == 1:
-                state = model.switch_state_machine(state='gs_only')
-            elif global_step == 3000:
-                state = model.switch_state_machine(state='joint')
-
             if args.distributed:
                 train_sampler.set_epoch(epoch)
 
@@ -193,15 +171,19 @@ def train(args):
             scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
             lr = 0.01
             if mode == GlobalAlignerMode.PointCloudOptimizer:
-                loss = scene.compute_global_alignment(init='mst', niter=0, schedule='linear', lr=lr)
+                loss = scene.compute_global_alignment(init='mst', niter=50, schedule='linear', lr=lr)
+
+            # time1 = time.time()
 
             depths = scene.get_depthmaps()
-            depths = torch.stack([d.unsqueeze(0) for d in depths], dim=0)
+            depths = torch.stack([d.unsqueeze(0) for d in depths], dim=0).detach()
+            
             poses_est = scene.get_im_poses().detach()
             poses_gt = torch.cat([batch['context']["extrinsics"][0], batch['target']["extrinsics"][0]])
+
             confs = [to_numpy(c) for c in scene.im_conf]    #在每个视角下 点云的置信度
             confs_max = max(c.max() for c in confs)
-            confs = torch.stack([torch.from_numpy(pl.get_cmap('jet')(d/confs_max)).permute(2, 0, 1).unsqueeze(0) for d in confs], dim=0)
+            confs = torch.stack([torch.from_numpy(d/confs_max).unsqueeze(0) for d in confs], dim=0)
 
             ########################################  scale up extrinsics  #########################################
             a, b = poses_est[0:2, :3, 3]
@@ -223,33 +205,25 @@ def train(args):
                                         transparent_cams=False, cam_size=0.05, silent=silent)    
             batch = data_shim(batch, device=device)
 
-            # 批量操作
-            confs = confs.mean(dim=0)
-            depths = depths.view(-1, *depths.shape[2:])
-
-            # 重构循环，减少重复代码
-            def append_to_batch_lists(item, list_name, start, end):
-                if list_name not in batch.keys():
-                    batch[list_name] = item[start:end].unsqueeze(0)
-                else:
-                    batch[list_name] = torch.cat([batch[list_name], item[start:end].unsqueeze(0)], dim=1)
-
-            # 使用函数减少重复代码
-            num_imgs = len(imgs) - 2
-            for i in range(num_imgs):
-                append_to_batch_lists(torch.cat([cnn1[i], cnn2[i]], dim=0), 'cnn', i, i+2)
-                append_to_batch_lists(torch.cat([feat1[i], feat2[i]], dim=0), 'features', i, i+2)
-                append_to_batch_lists(confs[:,i:i+2,:,:], 'confs', i, i+2)
-                append_to_batch_lists(depths[i:i+2], 'depths', i, i+2)
-                append_to_batch_lists(poses_est[i:i+2], 'pose', i, i+2)
-            
+            feat, cnn = [], []
+            for f1, f2, c1, c2 in zip(feat1, feat2, cnn1, cnn2):
+                cnn.append(torch.cat([c1, c2], dim=2))
+                feat.append(torch.cat([f1, f2], dim=1))
+            feat, cnn = torch.cat(feat, dim=0), torch.cat(cnn, dim=0)
             _,_,_,H,W = batch["context"]['image'].shape
-            batch['cnn'] = batch['cnn'].permute(0, 1, 3, 2)
-            batch['cnn'] = rearrange(batch['cnn'], "b v d (h w) -> b v d h w",h=H//16,w=W//16)
+            cnn = rearrange(cnn.unsqueeze(0).permute(0, 1, 3, 2), "b v d (h w) -> (b v) d h w",h=H//16,w=W//16)
+            
+            depths = depths.view(-1, *depths.shape[2:])
             batch['target']['extrinsics'] = poses_est[-1:].unsqueeze(0)
+            context_extrinsics = poses_est[:-1].unsqueeze(0)
+            context_depths = depths[:-1].unsqueeze(0)
+            context_confs = confs[:-1].unsqueeze(0)
 
-            ret, data_gt, _, _ = model.gaussian_model(batch, batch['features'], batch['cnn'], \
-                                    batch['pose'] ,batch['depths'], batch['confs'].float(), global_step)
+            # time2 = time.time()
+
+            ret, data_gt, _, _ = model.gaussian_model(batch, feat, cnn, context_extrinsics ,context_depths, context_confs.float(), global_step)
+            
+            # time3 = time.time()
 
             # compute loss
             model.gs_optimizer.zero_grad()
@@ -260,8 +234,9 @@ def train(args):
             loss_all.backward()
             model.gs_optimizer.step()
             model.gs_scheduler.step()
-            model.dust3r_optimizer.step()
-            model.dust3r_scheduler.step()
+            if state != 'gs_only':
+                model.dust3r_optimizer.step()
+                model.dust3r_scheduler.step()
 
             scalars_to_log["train/step"] = global_step
             scalars_to_log["lr"] = model.gs_scheduler.get_last_lr()[0]
@@ -276,14 +251,15 @@ def train(args):
                     mse_error = img2mse(data_gt["rgb"], ret["rgb"]).item()
                     scalars_to_log["train/psnr"] = mse2psnr(mse_error)
 
-                    pose_error = evaluate_camera_alignment(poses_est, poses_gt.to(poses_est.device))  
-                    scalars_to_log["train/R_err"] = pose_error['R_error_mean']
-                    scalars_to_log["train/t_err"] = pose_error['t_error_mean']
+                    # pose_error = evaluate_camera_alignment(poses_est, poses_gt.to(poses_est.device))  
+                    # scalars_to_log["train/R_err"] = pose_error['R_error_mean']
+                    # scalars_to_log["train/t_err"] = pose_error['t_error_mean']
                     # visualize_cameras(visdom_ins, step=global_step, poses=[poses_est, poses_gt], cam_depth=0.1, caption="not aligned")
 
                     logstr = "{} Epoch: {} Scene: {} ".format(args.expname, epoch, scene_name)
                     for k in scalars_to_log.keys():
                         logstr += " {}: {:.3f}".format(k, scalars_to_log[k])
+                    # print(logstr, " | {:.02f} {:.02f} {:.02f} {:.02f} s/iter".format(time1-time0,time2-time1,time3-time2, dt))
                     print(logstr, " | {:.02f} s/iter".format(dt))
                     
                     if args.expname != 'debug':

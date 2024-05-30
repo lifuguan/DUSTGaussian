@@ -51,7 +51,7 @@ def loader_resize(rgb, camera, src_rgbs, src_cameras, depth = None, src_depths =
     src_rgbs = np.stack(src_rgbs, axis=0)
     return rgb, depth, camera, src_rgbs, src_depths, src_cameras, intrinsics[..., :3, :3], src_intrinsics[..., :3, :3]
 
-class WaymoStaticDataset(Dataset):
+class WaymoScapeDataset(Dataset):
     ORIGINAL_SIZE = [[1280, 1920], [1280, 1920], [1280, 1920], [884, 1920], [884, 1920]]
     OPENCV2DATASET = np.array(
         [[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]]
@@ -83,19 +83,11 @@ class WaymoStaticDataset(Dataset):
         self.node_id_to_idx_list = []
         self.train_view_graphs = []
 
-        if mode == 'train':
-            # self.image_size = (224, 320)
-            # self.image_size = (512,336)
-            self.image_size = (336,512)
-        else:
-            # self.image_size = (640,960)        
-            self.image_size = (512,336)    
-            # self.image_size = (224, 320)
+        self.image_size = (336,512)
         all_scenes = os.listdir(self.folder_path)
     
         ############     Wamyo Parameters     ############
-        # self.num_cams, self.camera_list =1, [0]
-        self.num_cams, self.camera_list =5, [3,1, 0, 2,4]
+        self.num_cams, self.camera_list =1, [0]
         
         self.start_timestep, self.end_timestep = 0, 197
         if len(scenes) > 0:
@@ -142,7 +134,7 @@ class WaymoStaticDataset(Dataset):
             if self.mode == 'train' or self.mode == 'eval_pose':
                 i_render = i_train
             else:
-                i_render = i_test
+                i_render = i_train
 
             self.train_intrinsics.append(intrinsics[i_train])
             self.train_poses.append(c2w_mats[i_train])
@@ -202,7 +194,6 @@ class WaymoStaticDataset(Dataset):
                 cx * self.image_size[1] / self.ORIGINAL_SIZE[i][1],
                 cy * self.image_size[0] / self.ORIGINAL_SIZE[i][0],
             )
-            # intrinsic = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
             intrinsic = np.array([[fx, 0, cx,0], [0, fy, cy,0], [0, 0, 1, 0], [0, 0, 0, 1]])
             _intrinsics.append(intrinsic)
 
@@ -261,7 +252,7 @@ class WaymoStaticDataset(Dataset):
         return len(self.render_rgb_files)
 
     def __len__(self):
-        return len(self.render_rgb_files) * 100000 if self.mode == 'train' else len(self.render_rgb_files)
+        return len(self.render_rgb_files) - 10
 
     def __getitem__(self, idx):
         idx = idx % len(self.render_rgb_files)
@@ -274,9 +265,6 @@ class WaymoStaticDataset(Dataset):
         else: 
             depth = None
         render_pose = self.render_poses[idx]
-        # img_dust_target = exif_transpose(PIL.Image.open(rgb_file)).convert('RGB')        
-        # translation = np.array([3, 0, 0])
-        # render_pose[:, 3] += np.dot(render_pose[:, :3], translation)
         
         intrinsics = self.render_intrinsics[idx]
         depth_range = self.render_depth_range[idx]
@@ -286,47 +274,20 @@ class WaymoStaticDataset(Dataset):
         train_depth_files = self.train_depth_files[train_set_id]
         train_poses = self.train_poses[train_set_id]
         train_intrinsics = self.train_intrinsics[train_set_id]
-        idx_to_node_id = self.idx_to_node_id_list[train_set_id]
-        node_id_to_idx = self.node_id_to_idx_list[train_set_id]
 
         camera = np.concatenate((list(self.image_size), intrinsics.flatten(),
                                  render_pose.flatten())).astype(np.float32)
 
-        if self.mode == 'train':
-            if rgb_file in train_rgb_files:
-                id_render = train_rgb_files.index(rgb_file)
-            else:
-                id_render = -1
-            subsample_factor = np.random.choice(np.arange(1, 4), p=[0.2, 0.45, 0.35])
-            num_select = self.num_source_views 
+        if rgb_file in train_rgb_files:
+            id_render = train_rgb_files.index(rgb_file)
         else:
-            if rgb_file in train_rgb_files:
-                id_render = train_rgb_files.index(rgb_file)
-            else:
-                id_render = -1
-            subsample_factor = 1
-            num_select = self.num_source_views
+            id_render = -1
 
-        nearest_pose_ids = None
+        id_left = 0 if id_render-4 < 0 else id_render - 3
+        id_right = len(train_rgb_files) - 1 if id_render+4 > len(train_rgb_files) else id_render + 3
+        nearest_pose_ids = [id_left, id_right]
 
-        nearest_pose_ids = get_nearest_pose_ids(render_pose,
-                                                train_poses,
-                                                num_select=num_select,
-                                                tar_id=id_render,
-                                                angular_dist_method='dist')
-
-        assert id_render not in nearest_pose_ids
-        # occasionally include input image
-        if np.random.choice([0, 1], p=[0.995, 0.005]) and self.mode == 'train':
-            nearest_pose_ids[np.random.choice(len(nearest_pose_ids))] = id_render
-
-        # relative_poses = None if self.args.selection_rule == 'pose' else \
-        #                  get_relative_poses(idx, view_graph['two_view_geometries'], idx_to_node_id, nearest_pose_ids)
-
-        src_name = []
-        src_rgbs, src_depths = [], []
-        src_cameras = []
-        src_intrinsics, src_extrinsics = [], []
+        src_intrinsics, src_extrinsics, src_name, src_rgbs, src_depths, src_cameras = [], [], [], [], [], []
         pil_path = []
         for id in nearest_pose_ids:
             src_rgb = imageio.imread(train_rgb_files[id]).astype(np.float32) / 255.
@@ -346,7 +307,6 @@ class WaymoStaticDataset(Dataset):
             src_camera = np.concatenate((list(self.image_size), train_intrinsics_.flatten(),
                                          train_pose.flatten())).astype(np.float32)
             src_cameras.append(src_camera)
-            # src_dust_imgs.append(img_dust_context)
 
         pil_path.append(rgb_file)
         src_rgbs = np.stack(src_rgbs, axis=0)
@@ -392,8 +352,8 @@ class WaymoStaticDataset(Dataset):
                         "intrinsics": pix_src_intrinsics,
                         "image": torch.from_numpy(pix_src_rgbs[..., :3]).permute(0, 3, 1, 2),
                         # "depth": torch.from_numpy(src_depths[..., None]).permute(0, 3, 1, 2),
-                        "near":  depth_range[0].repeat(num_select) / scale,
-                        "far": depth_range[1].repeat(num_select) / scale,
+                        "near":  depth_range[0].repeat(self.num_source_views) / scale,
+                        "far": depth_range[1].repeat(self.num_source_views) / scale,
                         "index": torch.tensor([int(i) for i in src_name]),
                 },
                 "target": {

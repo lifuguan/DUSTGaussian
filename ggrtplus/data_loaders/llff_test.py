@@ -168,8 +168,6 @@ class LLFFTestDataset(Dataset):
         pix_src_intrinsics = self.normalize_intrinsics(torch.from_numpy(pix_src_intrinsics[:,:3,:3]).float(), self.image_size)
         pix_intrinsics = self.normalize_intrinsics(torch.from_numpy(pix_intrinsics[:3,:3]).unsqueeze(0).float(), self.image_size)
 
-        # # intrinsics[:, :2, :2] *= self.ratio
-        # src_intrinsics[:, :2, :2]=src_intrinsics[:,:2,:2]*self.ratio
         
         depth_range = torch.tensor([depth_range[0] * 0.9, depth_range[1] * 1.5], dtype=torch.float32)
 

@@ -149,7 +149,7 @@ def train(args):
         num_workers=args.workers,
         pin_memory=True,
         sampler=train_sampler,
-        shuffle=True if train_sampler is None else False,
+        shuffle=False if train_sampler is None else False,
     )
 
     # create validation dataset
